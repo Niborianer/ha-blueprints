@@ -1,0 +1,166 @@
+blueprint:
+  name: Area Linked Entities (multi-room in one automation)
+  description: >
+    Sync ON/OFF (and selected attributes) across entities, but ONLY within the area
+    of the triggering entity. Use multiple areas to cover multiple rooms in one automation.
+  domain: automation
+  input:
+    areas:
+      name: Areas (rooms) to include
+      description: Select the rooms/areas that should have independent syncing.
+      selector:
+        area:
+          multiple: true
+
+    domains:
+      name: Domains to sync
+      description: Keep this narrow for performance (usually light + switch).
+      default:
+        - light
+        - switch
+      selector:
+        select:
+          multiple: true
+          options:
+            - light
+            - switch
+            - fan
+
+    delay_milliseconds:
+      name: Delay (milliseconds)
+      description: Small throttle to avoid rapid ping-pong and to reduce load.
+      default: 150
+      selector:
+        number:
+          min: 0
+          max: 1000
+          unit_of_measurement: ms
+          mode: box
+
+    exclude_entities:
+      name: Exclude entities (optional)
+      description: Entities that should never be synced even if they are in the selected areas.
+      default: []
+      selector:
+        entity:
+          multiple: true
+
+mode: single
+max_exceeded: silent
+
+variables:
+  selected_areas: !input areas
+  selected_domains: !input domains
+  excluded: !input exclude_entities
+
+trigger:
+  - platform: event
+    event_type: state_changed
+
+condition:
+  - condition: template
+    value_template: >-
+      {% set e = trigger.event.data.entity_id %}
+      {% set ns = trigger.event.data.new_state %}
+      {% set os = trigger.event.data.old_state %}
+      {% if e is none or ns is none or os is none %}
+        false
+      {% elif ns.context.id == this.context.id %}
+        false
+      {% else %}
+        {% set dom = e.split('.')[0] %}
+        {% set a = area_id(e) %}
+        {{ (a in selected_areas) and (dom in selected_domains) and (e not in excluded) }}
+      {% endif %}
+
+action:
+  - variables:
+      entity_id: "{{ trigger.event.data.entity_id }}"
+      domain: "{{ entity_id.split('.')[0] }}"
+      new_state: "{{ trigger.event.data.new_state }}"
+      old_state: "{{ trigger.event.data.old_state }}"
+      area: "{{ area_id(entity_id) }}"
+      # entities in same area, filtered by chosen domains, minus excludes:
+      group_entities: >-
+        {% set dom_re = '^(' ~ (selected_domains | join('|')) ~ ')\\.' %}
+        {% set area_list = area_entities(area) if area else [] %}
+        {{ area_list
+            | reject('in', excluded)
+            | select('match', dom_re)
+            | list }}
+      others: "{{ group_entities | reject('eq', entity_id) | list }}"
+      other_lights: "{{ others | select('match', '^light\\.') | list }}"
+      other_fans: "{{ others | select('match', '^fan\\.') | list }}"
+
+  - choose:
+      # --- ON/OFF sync (switches + lights in that area)
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ old_state.state != new_state.state and new_state.state in ['on','off'] and (others | length > 0) }}
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ new_state.state == 'on' }}"
+                sequence:
+                  - service: homeassistant.turn_on
+                    target:
+                      entity_id: "{{ others }}"
+              - conditions:
+                  - condition: template
+                    value_template: "{{ new_state.state == 'off' }}"
+                sequence:
+                  - service: homeassistant.turn_off
+                    target:
+                      entity_id: "{{ others }}"
+          - delay:
+              milliseconds: !input delay_milliseconds
+
+      # --- Brightness sync (only lights)
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ domain == 'light'
+                 and (old_state.attributes.brightness != new_state.attributes.brightness)
+                 and (new_state.attributes.brightness is defined)
+                 and (other_lights | length > 0) }}
+        sequence:
+          - service: light.turn_on
+            data:
+              entity_id: "{{ other_lights }}"
+              brightness: "{{ new_state.attributes.brightness }}"
+          - delay:
+              milliseconds: !input delay_milliseconds
+
+      # --- Color temp sync (only lights)
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ domain == 'light'
+                 and (old_state.attributes.color_temp != new_state.attributes.color_temp)
+                 and (new_state.attributes.color_temp is defined)
+                 and (other_lights | length > 0) }}
+        sequence:
+          - service: light.turn_on
+            data:
+              entity_id: "{{ other_lights }}"
+              color_temp: "{{ new_state.attributes.color_temp }}"
+          - delay:
+              milliseconds: !input delay_milliseconds
+
+      # --- Fan percentage sync (optional)
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ domain == 'fan'
+                 and (old_state.attributes.percentage != new_state.attributes.percentage)
+                 and (new_state.attributes.percentage is defined)
+                 and (other_fans | length > 0) }}
+        sequence:
+          - service: fan.set_percentage
+            data:
+              entity_id: "{{ other_fans }}"
+              percentage: "{{ new_state.attributes.percentage }}"
+          - delay:
+              milliseconds: !input delay_milliseconds
