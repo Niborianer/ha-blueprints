@@ -1,14 +1,12 @@
 blueprint:
-  name: Multi Linked Entity Groups (one automation, multiple rooms)
+  name: Linked Entities by Label Groups (unlimited groups)
   description: >
-    Link multiple independent groups of entities in ONE automation.
-    If any entity in a group changes, only that group is synced.
-    Supports ON/OFF for any domain, brightness/color_temp for lights, percentage for fans.
+    Sync entities only within their label-group. Create as many labels (=groups) as you want
+    and assign entities to them. One automation can handle all groups.
   domain: automation
   input:
     delay_milliseconds:
       name: Delay (ms)
-      description: Small throttle to reduce ping-pong.
       default: 150
       selector:
         number:
@@ -19,53 +17,17 @@ blueprint:
 
     exclude_entities:
       name: Exclude entities (optional)
-      description: Entities that should never be synced even if selected in a group.
       default: []
       selector:
         entity:
           multiple: true
 
-    group1_entities:
-      name: Group 1 (e.g. Wohnzimmer)
+    group_labels:
+      name: Groups (labels)
+      description: Select the labels that represent your sync-groups (e.g. sync_wohnzimmer, sync_flur).
       selector:
-        entity:
+        label:
           multiple: true
-      default: []
-
-    group2_entities:
-      name: Group 2 (e.g. Flur)
-      selector:
-        entity:
-          multiple: true
-      default: []
-
-    group3_entities:
-      name: Group 3 (e.g. Schlafzimmer)
-      selector:
-        entity:
-          multiple: true
-      default: []
-
-    group4_entities:
-      name: Group 4 (optional)
-      selector:
-        entity:
-          multiple: true
-      default: []
-
-    group5_entities:
-      name: Group 5 (optional)
-      selector:
-        entity:
-          multiple: true
-      default: []
-
-    group6_entities:
-      name: Group 6 (optional)
-      selector:
-        entity:
-          multiple: true
-      default: []
 
 mode: single
 max_exceeded: silent
@@ -77,18 +39,7 @@ trigger:
 variables:
   delay_ms: !input delay_milliseconds
   excluded: !input exclude_entities
-
-  g1: !input group1_entities
-  g2: !input group2_entities
-  g3: !input group3_entities
-  g4: !input group4_entities
-  g5: !input group5_entities
-  g6: !input group6_entities
-
-  # All entities that are part of any configured group (minus excluded)
-  all_entities: >-
-    {% set all = (g1 + g2 + g3 + g4 + g5 + g6) | unique | list %}
-    {{ all | reject('in', excluded) | list }}
+  group_labels: !input group_labels
 
 condition:
   - condition: template
@@ -100,8 +51,12 @@ condition:
         false
       {% elif ns.context.id == this.context.id %}
         false
+      {% elif e in excluded %}
+        false
       {% else %}
-        {{ e in all_entities }}
+        {# entity must have at least one of the selected group labels #}
+        {% set ent_labels = labels(e) %}
+        {{ (ent_labels | select('in', group_labels) | list | length) > 0 }}
       {% endif %}
 
 action:
@@ -111,22 +66,20 @@ action:
       old_state: "{{ trigger.event.data.old_state }}"
       domain: "{{ entity_id.split('.')[0] }}"
 
-      # Determine which group this entity belongs to (first match wins)
+      ent_labels: "{{ labels(entity_id) }}"
+      # Take the first matching label as the "group" for this trigger
+      group_label: >-
+        {{ (ent_labels | select('in', group_labels) | list | first) }}
+
       group_entities: >-
-        {% set groups = [g1, g2, g3, g4, g5, g6] %}
-        {% for grp in groups %}
-          {% if entity_id in grp %}
-            {{ (grp | reject('in', excluded) | list) }}
-            {% break %}
-          {% endif %}
-        {% endfor %}
+        {{ (label_entities(group_label) | reject('in', excluded) | list) }}
 
       others: "{{ group_entities | reject('eq', entity_id) | list }}"
       other_lights: "{{ others | select('match', '^light\\.') | list }}"
       other_fans: "{{ others | select('match', '^fan\\.') | list }}"
 
   - choose:
-      # --- ON/OFF sync for anything in the group
+      # ON/OFF sync (any domain)
       - conditions:
           - condition: template
             value_template: >-
@@ -150,7 +103,7 @@ action:
           - delay:
               milliseconds: "{{ delay_ms }}"
 
-      # --- Brightness sync (lights only)
+      # Brightness sync (lights only)
       - conditions:
           - condition: template
             value_template: >-
@@ -166,7 +119,7 @@ action:
           - delay:
               milliseconds: "{{ delay_ms }}"
 
-      # --- Color temperature sync (lights only)
+      # Color temp sync (lights only)
       - conditions:
           - condition: template
             value_template: >-
@@ -182,7 +135,7 @@ action:
           - delay:
               milliseconds: "{{ delay_ms }}"
 
-      # --- Fan percentage sync (fans only)
+      # Fan percentage sync (fans only)
       - conditions:
           - condition: template
             value_template: >-
