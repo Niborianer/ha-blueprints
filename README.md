@@ -7,7 +7,8 @@ Ich hoffe das diese euch unterstützen Home Assistant für euch genauso lieben z
 Klicke auf den Button, um den Blueprint direkt in Home Assistant zu importieren:
 
 ha-blueprint-area-linked-entities.yaml
-[![Import Blueprint into Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=<ENCODED_RAW_URL>)
+
+[![Import Blueprint into Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FNiborianer%2Fha-blueprints%2Fmain%2Fha-blueprint-area-linked-entities.yaml)
 
 > Hinweis: Der Link funktioniert nur, wenn `my.home-assistant.io` bei dir erreichbar ist (Standard bei Home Assistant).
 
@@ -18,9 +19,9 @@ ha-blueprint-area-linked-entities.yaml
 ### 1) <Blueprint-Name>
 **Beschreibung:** Kurzbeschreibung, was der Blueprint macht.
 
-- **Datei:** `blueprints/automation/<ordner>/<datei>.yaml`
+- **Datei:** `/ha-blueprints/blueprint-area-linked-entities.yaml`
 - **Import:**  
-  https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=RAW_URL_ENCODED_HERE
+  https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FNiborianer%2Fha-blueprints%2Fmain%2Fha-blueprint-area-linked-entities.yaml
 
 ---
 
