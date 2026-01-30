@@ -1,13 +1,14 @@
 blueprint:
-  name: Linked Entities by Label Groups (unlimited groups)
+  name: Linked Entities by Groups (unlimited groups, no labels)
   description: >
-    Sync entities only within their label-group. Create as many labels (=groups) as you want
-    and assign entities to them. One automation can handle all groups.
+    Select multiple Home Assistant group helpers. Each group can contain unlimited entities.
+    If any entity in a group changes, only that group is synchronized.
   domain: automation
   input:
     delay_milliseconds:
       name: Delay (ms)
-      default: 150
+      description: How long to delay changes to linked entities.
+      default: 200
       selector:
         number:
           min: 0
@@ -17,17 +18,20 @@ blueprint:
 
     exclude_entities:
       name: Exclude entities (optional)
+      description: Entities that should never be synced even if they are in a selected group.
       default: []
       selector:
         entity:
           multiple: true
 
-    group_labels:
-      name: Groups (labels)
-      description: Select the labels that represent your sync-groups (e.g. sync_wohnzimmer, sync_flur).
+    sync_groups:
+      name: Groups
+      description: Select the group helpers that represent your sync-groups.
       selector:
-        label:
+        entity:
           multiple: true
+          filter:
+            domain: group
 
 mode: single
 max_exceeded: silent
@@ -39,7 +43,15 @@ trigger:
 variables:
   delay_ms: !input delay_milliseconds
   excluded: !input exclude_entities
-  group_labels: !input group_labels
+  groups: !input sync_groups
+
+  # Flatten all members of all selected groups
+  all_members: >-
+    {% set ns = namespace(e=[]) %}
+    {% for g in groups %}
+      {% set ns.e = ns.e + (expand(g) | map(attribute='entity_id') | list) %}
+    {% endfor %}
+    {{ ns.e | reject('in', excluded) | unique | list }}
 
 condition:
   - condition: template
@@ -54,9 +66,7 @@ condition:
       {% elif e in excluded %}
         false
       {% else %}
-        {# entity must have at least one of the selected group labels #}
-        {% set ent_labels = labels(e) %}
-        {{ (ent_labels | select('in', group_labels) | list | length) > 0 }}
+        {{ e in all_members }}
       {% endif %}
 
 action:
@@ -66,20 +76,31 @@ action:
       old_state: "{{ trigger.event.data.old_state }}"
       domain: "{{ entity_id.split('.')[0] }}"
 
-      ent_labels: "{{ labels(entity_id) }}"
-      # Take the first matching label as the "group" for this trigger
-      group_label: >-
-        {{ (ent_labels | select('in', group_labels) | list | first) }}
+      # Find the first group that contains the triggering entity
+      trigger_group: >-
+        {% set found = namespace(g='') %}
+        {% for g in groups %}
+          {% set members = expand(g) | map(attribute='entity_id') | list %}
+          {% if entity_id in members %}
+            {% set found.g = g %}
+            {% break %}
+          {% endif %}
+        {% endfor %}
+        {{ found.g }}
 
       group_entities: >-
-        {{ (label_entities(group_label) | reject('in', excluded) | list) }}
+        {% if trigger_group %}
+          {{ expand(trigger_group) | map(attribute='entity_id') | reject('in', excluded) | list }}
+        {% else %}
+          []
+        {% endif %}
 
       others: "{{ group_entities | reject('eq', entity_id) | list }}"
       other_lights: "{{ others | select('match', '^light\\.') | list }}"
       other_fans: "{{ others | select('match', '^fan\\.') | list }}"
 
   - choose:
-      # ON/OFF sync (any domain)
+      # ON/OFF sync (any entity types)
       - conditions:
           - condition: template
             value_template: >-
