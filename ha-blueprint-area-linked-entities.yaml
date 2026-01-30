@@ -1,34 +1,14 @@
 blueprint:
-  name: Area Linked Entities (multi-room in one automation)
+  name: Multi Linked Entity Groups (one automation, multiple rooms)
   description: >
-    Sync ON/OFF (and selected attributes) across entities, but ONLY within the area
-    of the triggering entity. Use multiple areas to cover multiple rooms in one automation.
+    Link multiple independent groups of entities in ONE automation.
+    If any entity in a group changes, only that group is synced.
+    Supports ON/OFF for any domain, brightness/color_temp for lights, percentage for fans.
   domain: automation
   input:
-    areas:
-      name: Areas (rooms) to include
-      description: Select the rooms/areas that should have independent syncing.
-      selector:
-        area:
-          multiple: true
-
-    domains:
-      name: Domains to sync
-      description: Keep this narrow for performance (usually light + switch).
-      default:
-        - light
-        - switch
-      selector:
-        select:
-          multiple: true
-          options:
-            - light
-            - switch
-            - fan
-
     delay_milliseconds:
-      name: Delay (milliseconds)
-      description: Small throttle to avoid rapid ping-pong and to reduce load.
+      name: Delay (ms)
+      description: Small throttle to reduce ping-pong.
       default: 150
       selector:
         number:
@@ -39,23 +19,76 @@ blueprint:
 
     exclude_entities:
       name: Exclude entities (optional)
-      description: Entities that should never be synced even if they are in the selected areas.
+      description: Entities that should never be synced even if selected in a group.
       default: []
       selector:
         entity:
           multiple: true
 
+    group1_entities:
+      name: Group 1 (e.g. Wohnzimmer)
+      selector:
+        entity:
+          multiple: true
+      default: []
+
+    group2_entities:
+      name: Group 2 (e.g. Flur)
+      selector:
+        entity:
+          multiple: true
+      default: []
+
+    group3_entities:
+      name: Group 3 (e.g. Schlafzimmer)
+      selector:
+        entity:
+          multiple: true
+      default: []
+
+    group4_entities:
+      name: Group 4 (optional)
+      selector:
+        entity:
+          multiple: true
+      default: []
+
+    group5_entities:
+      name: Group 5 (optional)
+      selector:
+        entity:
+          multiple: true
+      default: []
+
+    group6_entities:
+      name: Group 6 (optional)
+      selector:
+        entity:
+          multiple: true
+      default: []
+
 mode: single
 max_exceeded: silent
-
-variables:
-  selected_areas: !input areas
-  selected_domains: !input domains
-  excluded: !input exclude_entities
 
 trigger:
   - platform: event
     event_type: state_changed
+
+variables:
+  delay_ms: !input delay_milliseconds
+  excluded: !input exclude_entities
+
+  g1: !input group1_entities
+  g2: !input group2_entities
+  g3: !input group3_entities
+  g4: !input group4_entities
+  g5: !input group5_entities
+  g6: !input group6_entities
+
+  # All entities that are part of any configured group (minus excluded)
+  all_entities: >-
+    {% set all = (g1 + g2 + g3 + g4 + g5 + g6) | unique | list %}
+    {{ all | reject('in', excluded) | list }}
 
 condition:
   - condition: template
@@ -68,32 +101,32 @@ condition:
       {% elif ns.context.id == this.context.id %}
         false
       {% else %}
-        {% set dom = e.split('.')[0] %}
-        {% set a = area_id(e) %}
-        {{ (a in selected_areas) and (dom in selected_domains) and (e not in excluded) }}
+        {{ e in all_entities }}
       {% endif %}
 
 action:
   - variables:
       entity_id: "{{ trigger.event.data.entity_id }}"
-      domain: "{{ entity_id.split('.')[0] }}"
       new_state: "{{ trigger.event.data.new_state }}"
       old_state: "{{ trigger.event.data.old_state }}"
-      area: "{{ area_id(entity_id) }}"
-      # entities in same area, filtered by chosen domains, minus excludes:
+      domain: "{{ entity_id.split('.')[0] }}"
+
+      # Determine which group this entity belongs to (first match wins)
       group_entities: >-
-        {% set dom_re = '^(' ~ (selected_domains | join('|')) ~ ')\\.' %}
-        {% set area_list = area_entities(area) if area else [] %}
-        {{ area_list
-            | reject('in', excluded)
-            | select('match', dom_re)
-            | list }}
+        {% set groups = [g1, g2, g3, g4, g5, g6] %}
+        {% for grp in groups %}
+          {% if entity_id in grp %}
+            {{ (grp | reject('in', excluded) | list) }}
+            {% break %}
+          {% endif %}
+        {% endfor %}
+
       others: "{{ group_entities | reject('eq', entity_id) | list }}"
       other_lights: "{{ others | select('match', '^light\\.') | list }}"
       other_fans: "{{ others | select('match', '^fan\\.') | list }}"
 
   - choose:
-      # --- ON/OFF sync (switches + lights in that area)
+      # --- ON/OFF sync for anything in the group
       - conditions:
           - condition: template
             value_template: >-
@@ -115,9 +148,9 @@ action:
                     target:
                       entity_id: "{{ others }}"
           - delay:
-              milliseconds: !input delay_milliseconds
+              milliseconds: "{{ delay_ms }}"
 
-      # --- Brightness sync (only lights)
+      # --- Brightness sync (lights only)
       - conditions:
           - condition: template
             value_template: >-
@@ -131,9 +164,9 @@ action:
               entity_id: "{{ other_lights }}"
               brightness: "{{ new_state.attributes.brightness }}"
           - delay:
-              milliseconds: !input delay_milliseconds
+              milliseconds: "{{ delay_ms }}"
 
-      # --- Color temp sync (only lights)
+      # --- Color temperature sync (lights only)
       - conditions:
           - condition: template
             value_template: >-
@@ -147,9 +180,9 @@ action:
               entity_id: "{{ other_lights }}"
               color_temp: "{{ new_state.attributes.color_temp }}"
           - delay:
-              milliseconds: !input delay_milliseconds
+              milliseconds: "{{ delay_ms }}"
 
-      # --- Fan percentage sync (optional)
+      # --- Fan percentage sync (fans only)
       - conditions:
           - condition: template
             value_template: >-
@@ -163,4 +196,4 @@ action:
               entity_id: "{{ other_fans }}"
               percentage: "{{ new_state.attributes.percentage }}"
           - delay:
-              milliseconds: !input delay_milliseconds
+              milliseconds: "{{ delay_ms }}"
