@@ -1,14 +1,16 @@
 blueprint:
-  name: Linked Entities by Groups (unlimited groups, no labels)
+  name: Sync Linked Entities (Multi-Groups)
   description: >
-    Select multiple Home Assistant group helpers. Each group can contain unlimited entities.
-    If any entity in a group changes, only that group is synchronized.
+    Sync entities within multiple independent groups in ONE automation.
+    If any entity in a group changes (on/off/brightness/color_temp/percentage),
+    only the other entities of that SAME group are updated.
   domain: automation
+
   input:
     delay_milliseconds:
       name: Delay (ms)
-      description: How long to delay changes to linked entities.
-      default: 200
+      description: Delay after syncing (throttle).
+      default: 0
       selector:
         number:
           min: 0
@@ -16,42 +18,68 @@ blueprint:
           unit_of_measurement: ms
           mode: box
 
-    exclude_entities:
-      name: Exclude entities (optional)
-      description: Entities that should never be synced even if they are in a selected group.
+    # Gruppen-Slots (statisch, aber beliebig befüllbar)
+    group1_entities:
+      name: Group 1 (e.g. Wohnzimmer)
+      selector:
+        entity:
+          multiple: true
       default: []
+
+    group2_entities:
+      name: Group 2 (e.g. Flur Licht)
       selector:
         entity:
           multiple: true
+      default: []
 
-    sync_groups:
-      name: Groups
-      description: Select the group helpers that represent your sync-groups.
+    group3_entities:
+      name: Group 3 (e.g. Flur LED)
       selector:
         entity:
           multiple: true
-          filter:
-            domain: group
+      default: []
 
-mode: single
+    group4_entities:
+      name: Group 4 (e.g. Schlafzimmer)
+      selector:
+        entity:
+          multiple: true
+      default: []
+
+    group5_entities:
+      name: Group 5 (optional)
+      selector:
+        entity:
+          multiple: true
+      default: []
+
+    group6_entities:
+      name: Group 6 (optional)
+      selector:
+        entity:
+          multiple: true
+      default: []
+
+mode: queued
+max: 50
 max_exceeded: silent
-
-trigger:
-  - platform: event
-    event_type: state_changed
 
 variables:
   delay_ms: !input delay_milliseconds
-  excluded: !input exclude_entities
-  groups: !input sync_groups
 
-  # Flatten all members of all selected groups
-  all_members: >-
-    {% set ns = namespace(e=[]) %}
-    {% for g in groups %}
-      {% set ns.e = ns.e + (expand(g) | map(attribute='entity_id') | list) %}
-    {% endfor %}
-    {{ ns.e | reject('in', excluded) | unique | list }}
+  g1: !input group1_entities
+  g2: !input group2_entities
+  g3: !input group3_entities
+  g4: !input group4_entities
+  g5: !input group5_entities
+  g6: !input group6_entities
+
+trigger:
+  # Wichtig: trigger.entity_id akzeptiert KEIN Template,
+  # daher nutzen wir event state_changed und filtern später auf "gehört zu irgendeiner Gruppe".
+  - platform: event
+    event_type: state_changed
 
 condition:
   - condition: template
@@ -63,10 +91,8 @@ condition:
         false
       {% elif ns.context.id == this.context.id %}
         false
-      {% elif e in excluded %}
-        false
       {% else %}
-        {{ e in all_members }}
+        {{ e in (g1 + g2 + g3 + g4 + g5 + g6) }}
       {% endif %}
 
 action:
@@ -74,100 +100,100 @@ action:
       entity_id: "{{ trigger.event.data.entity_id }}"
       new_state: "{{ trigger.event.data.new_state }}"
       old_state: "{{ trigger.event.data.old_state }}"
-      domain: "{{ entity_id.split('.')[0] }}"
 
-      # Find the first group that contains the triggering entity
-      trigger_group: >-
-        {% set found = namespace(g='') %}
-        {% for g in groups %}
-          {% set members = expand(g) | map(attribute='entity_id') | list %}
-          {% if entity_id in members %}
-            {% set found.g = g %}
-            {% break %}
-          {% endif %}
-        {% endfor %}
-        {{ found.g }}
-
-      group_entities: >-
-        {% if trigger_group %}
-          {{ expand(trigger_group) | map(attribute='entity_id') | reject('in', excluded) | list }}
+      # Finde die passende Gruppe (erste Treffergruppe gewinnt, wie bei deiner Automation)
+      linked_entities: >-
+        {% set e = entity_id %}
+        {% if e in g1 %}
+          {{ g1 }}
+        {% elif e in g2 %}
+          {{ g2 }}
+        {% elif e in g3 %}
+          {{ g3 }}
+        {% elif e in g4 %}
+          {{ g4 }}
+        {% elif e in g5 %}
+          {{ g5 }}
+        {% elif e in g6 %}
+          {{ g6 }}
         {% else %}
           []
         {% endif %}
 
-      others: "{{ group_entities | reject('eq', entity_id) | list }}"
-      other_lights: "{{ others | select('match', '^light\\.') | list }}"
-      other_fans: "{{ others | select('match', '^fan\\.') | list }}"
+      others: "{{ linked_entities | reject('eq', entity_id) | list }}"
 
   - choose:
-      # ON/OFF sync (any entity types)
+      # ON
       - conditions:
           - condition: template
             value_template: >-
-              {{ old_state.state != new_state.state and new_state.state in ['on','off'] and (others | length > 0) }}
+              {{ old_state.state != new_state.state and new_state.state == 'on' and (others | length > 0) }}
         sequence:
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ new_state.state == 'on' }}"
-                sequence:
-                  - service: homeassistant.turn_on
-                    target:
-                      entity_id: "{{ others }}"
-              - conditions:
-                  - condition: template
-                    value_template: "{{ new_state.state == 'off' }}"
-                sequence:
-                  - service: homeassistant.turn_off
-                    target:
-                      entity_id: "{{ others }}"
+          - service: homeassistant.turn_on
+            target:
+              entity_id: "{{ others }}"
           - delay:
               milliseconds: "{{ delay_ms }}"
 
-      # Brightness sync (lights only)
+      # OFF
       - conditions:
           - condition: template
             value_template: >-
-              {{ domain == 'light'
-                 and (old_state.attributes.brightness != new_state.attributes.brightness)
-                 and (new_state.attributes.brightness is defined)
-                 and (other_lights | length > 0) }}
+              {{ old_state.state != new_state.state and new_state.state == 'off' and (others | length > 0) }}
         sequence:
-          - service: light.turn_on
-            data:
-              entity_id: "{{ other_lights }}"
-              brightness: "{{ new_state.attributes.brightness }}"
+          - service: homeassistant.turn_off
+            target:
+              entity_id: "{{ others }}"
           - delay:
               milliseconds: "{{ delay_ms }}"
 
-      # Color temp sync (lights only)
+      # FAN percentage
       - conditions:
           - condition: template
             value_template: >-
-              {{ domain == 'light'
-                 and (old_state.attributes.color_temp != new_state.attributes.color_temp)
-                 and (new_state.attributes.color_temp is defined)
-                 and (other_lights | length > 0) }}
-        sequence:
-          - service: light.turn_on
-            data:
-              entity_id: "{{ other_lights }}"
-              color_temp: "{{ new_state.attributes.color_temp }}"
-          - delay:
-              milliseconds: "{{ delay_ms }}"
-
-      # Fan percentage sync (fans only)
-      - conditions:
-          - condition: template
-            value_template: >-
-              {{ domain == 'fan'
-                 and (old_state.attributes.percentage != new_state.attributes.percentage)
+              {{ old_state.attributes.percentage != new_state.attributes.percentage
                  and (new_state.attributes.percentage is defined)
-                 and (other_fans | length > 0) }}
+                 and (others | length > 0) }}
         sequence:
+          - variables:
+              set_fan_speed: "{{ new_state.attributes.percentage }}"
           - service: fan.set_percentage
             data:
-              entity_id: "{{ other_fans }}"
-              percentage: "{{ new_state.attributes.percentage }}"
+              entity_id: "{{ others }}"
+              percentage: "{{ set_fan_speed }}"
+          - delay:
+              milliseconds: "{{ delay_ms }}"
+
+      # Light brightness
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ old_state.attributes.brightness != new_state.attributes.brightness
+                 and (new_state.attributes.brightness is defined)
+                 and (others | length > 0) }}
+        sequence:
+          - variables:
+              set_light_brightness: "{{ new_state.attributes.brightness }}"
+          - service: light.turn_on
+            data:
+              entity_id: "{{ others }}"
+              brightness: "{{ set_light_brightness }}"
+          - delay:
+              milliseconds: "{{ delay_ms }}"
+
+      # Light color_temp
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ old_state.attributes.color_temp != new_state.attributes.color_temp
+                 and (new_state.attributes.color_temp is defined)
+                 and (others | length > 0) }}
+        sequence:
+          - variables:
+              set_light_color_temp: "{{ new_state.attributes.color_temp }}"
+          - service: light.turn_on
+            data:
+              entity_id: "{{ others }}"
+              color_temp: "{{ set_light_color_temp }}"
           - delay:
               milliseconds: "{{ delay_ms }}"
