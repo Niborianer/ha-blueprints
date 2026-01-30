@@ -18,44 +18,43 @@ blueprint:
           unit_of_measurement: ms
           mode: box
 
-    # Gruppen-Slots (statisch, aber beliebig befüllbar)
     group1_entities:
-      name: Group 1 (e.g. Wohnzimmer)
+      name: Group 1
       selector:
         entity:
           multiple: true
       default: []
 
     group2_entities:
-      name: Group 2 (e.g. Flur Licht)
+      name: Group 2
       selector:
         entity:
           multiple: true
       default: []
 
     group3_entities:
-      name: Group 3 (e.g. Flur LED)
+      name: Group 3
       selector:
         entity:
           multiple: true
       default: []
 
     group4_entities:
-      name: Group 4 (e.g. Schlafzimmer)
+      name: Group 4
       selector:
         entity:
           multiple: true
       default: []
 
     group5_entities:
-      name: Group 5 (optional)
+      name: Group 5
       selector:
         entity:
           multiple: true
       default: []
 
     group6_entities:
-      name: Group 6 (optional)
+      name: Group 6
       selector:
         entity:
           multiple: true
@@ -67,7 +66,6 @@ max_exceeded: silent
 
 variables:
   delay_ms: !input delay_milliseconds
-
   g1: !input group1_entities
   g2: !input group2_entities
   g3: !input group3_entities
@@ -76,8 +74,6 @@ variables:
   g6: !input group6_entities
 
 trigger:
-  # Wichtig: trigger.entity_id akzeptiert KEIN Template,
-  # daher nutzen wir event state_changed und filtern später auf "gehört zu irgendeiner Gruppe".
   - platform: event
     event_type: state_changed
 
@@ -101,24 +97,25 @@ action:
       new_state: "{{ trigger.event.data.new_state }}"
       old_state: "{{ trigger.event.data.old_state }}"
 
-      # Finde die passende Gruppe (erste Treffergruppe gewinnt, wie bei deiner Automation)
+      # !!! KRITISCH: linked_entities muss eine echte LISTE sein (nicht Text).
+      # Wir nutzen namespace, damit am Ende wirklich ein Python-List-Objekt entsteht.
       linked_entities: >-
-        {% set e = entity_id %}
+        {% set e = trigger.event.data.entity_id %}
+        {% set ns = namespace(lst=[]) %}
         {% if e in g1 %}
-          {{ g1 }}
+          {% set ns.lst = g1 %}
         {% elif e in g2 %}
-          {{ g2 }}
+          {% set ns.lst = g2 %}
         {% elif e in g3 %}
-          {{ g3 }}
+          {% set ns.lst = g3 %}
         {% elif e in g4 %}
-          {{ g4 }}
+          {% set ns.lst = g4 %}
         {% elif e in g5 %}
-          {{ g5 }}
+          {% set ns.lst = g5 %}
         {% elif e in g6 %}
-          {{ g6 }}
-        {% else %}
-          []
+          {% set ns.lst = g6 %}
         {% endif %}
+        {{ ns.lst }}
 
       others: "{{ linked_entities | reject('eq', entity_id) | list }}"
 
@@ -127,7 +124,9 @@ action:
       - conditions:
           - condition: template
             value_template: >-
-              {{ old_state.state != new_state.state and new_state.state == 'on' and (others | length > 0) }}
+              {{ old_state.state != new_state.state
+                 and new_state.state == 'on'
+                 and (others | length > 0) }}
         sequence:
           - service: homeassistant.turn_on
             target:
@@ -139,7 +138,9 @@ action:
       - conditions:
           - condition: template
             value_template: >-
-              {{ old_state.state != new_state.state and new_state.state == 'off' and (others | length > 0) }}
+              {{ old_state.state != new_state.state
+                 and new_state.state == 'off'
+                 and (others | length > 0) }}
         sequence:
           - service: homeassistant.turn_off
             target:
@@ -155,12 +156,10 @@ action:
                  and (new_state.attributes.percentage is defined)
                  and (others | length > 0) }}
         sequence:
-          - variables:
-              set_fan_speed: "{{ new_state.attributes.percentage }}"
           - service: fan.set_percentage
             data:
               entity_id: "{{ others }}"
-              percentage: "{{ set_fan_speed }}"
+              percentage: "{{ new_state.attributes.percentage }}"
           - delay:
               milliseconds: "{{ delay_ms }}"
 
@@ -172,12 +171,10 @@ action:
                  and (new_state.attributes.brightness is defined)
                  and (others | length > 0) }}
         sequence:
-          - variables:
-              set_light_brightness: "{{ new_state.attributes.brightness }}"
           - service: light.turn_on
             data:
               entity_id: "{{ others }}"
-              brightness: "{{ set_light_brightness }}"
+              brightness: "{{ new_state.attributes.brightness }}"
           - delay:
               milliseconds: "{{ delay_ms }}"
 
@@ -189,11 +186,9 @@ action:
                  and (new_state.attributes.color_temp is defined)
                  and (others | length > 0) }}
         sequence:
-          - variables:
-              set_light_color_temp: "{{ new_state.attributes.color_temp }}"
           - service: light.turn_on
             data:
               entity_id: "{{ others }}"
-              color_temp: "{{ set_light_color_temp }}"
+              color_temp: "{{ new_state.attributes.color_temp }}"
           - delay:
               milliseconds: "{{ delay_ms }}"
