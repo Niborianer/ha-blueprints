@@ -97,30 +97,23 @@ action:
       new_state: "{{ trigger.event.data.new_state }}"
       old_state: "{{ trigger.event.data.old_state }}"
 
-      # !!! KRITISCH: linked_entities muss eine echte LISTE sein (nicht Text).
-      # Wir nutzen namespace, damit am Ende wirklich ein Python-List-Objekt entsteht.
-      linked_entities: >-
+      # --- WICHTIG: echte Liste erzwingen (JSON roundtrip) ---
+      linked_entities_json: >-
         {% set e = trigger.event.data.entity_id %}
         {% set ns = namespace(lst=[]) %}
-        {% if e in g1 %}
-          {% set ns.lst = g1 %}
-        {% elif e in g2 %}
-          {% set ns.lst = g2 %}
-        {% elif e in g3 %}
-          {% set ns.lst = g3 %}
-        {% elif e in g4 %}
-          {% set ns.lst = g4 %}
-        {% elif e in g5 %}
-          {% set ns.lst = g5 %}
-        {% elif e in g6 %}
-          {% set ns.lst = g6 %}
+        {% if e in g1 %}{% set ns.lst = g1 %}
+        {% elif e in g2 %}{% set ns.lst = g2 %}
+        {% elif e in g3 %}{% set ns.lst = g3 %}
+        {% elif e in g4 %}{% set ns.lst = g4 %}
+        {% elif e in g5 %}{% set ns.lst = g5 %}
+        {% elif e in g6 %}{% set ns.lst = g6 %}
         {% endif %}
-        {{ ns.lst }}
+        {{ ns.lst | tojson }}
 
+      linked_entities: "{{ linked_entities_json | from_json }}"
       others: "{{ linked_entities | reject('eq', entity_id) | list }}"
 
   - choose:
-      # ON
       - conditions:
           - condition: template
             value_template: >-
@@ -134,7 +127,6 @@ action:
           - delay:
               milliseconds: "{{ delay_ms }}"
 
-      # OFF
       - conditions:
           - condition: template
             value_template: >-
@@ -148,7 +140,6 @@ action:
           - delay:
               milliseconds: "{{ delay_ms }}"
 
-      # FAN percentage
       - conditions:
           - condition: template
             value_template: >-
@@ -163,7 +154,6 @@ action:
           - delay:
               milliseconds: "{{ delay_ms }}"
 
-      # Light brightness
       - conditions:
           - condition: template
             value_template: >-
@@ -178,7 +168,6 @@ action:
           - delay:
               milliseconds: "{{ delay_ms }}"
 
-      # Light color_temp
       - conditions:
           - condition: template
             value_template: >-
